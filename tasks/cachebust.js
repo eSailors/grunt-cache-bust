@@ -9,6 +9,7 @@ var _ = require('grunt').util._;
 var DEFAULT_OPTIONS = {
     algorithm: 'md5',
     baseDir: './',
+    basePath:'',
     createCopies: true,
     deleteOriginals: false,
     encoding: 'utf8',
@@ -31,7 +32,7 @@ module.exports = function(grunt) {
         };
 
         //clear output dir if it was set
-        if (opts.clearOutputDir && opts.outputDir.length > 0) {
+        if(opts.clearOutputDir && opts.outputDir.length > 0) {
             fs.removeSync(path.resolve((discoveryOpts.cwd ? discoveryOpts.cwd + opts.clearOutputDir : opts.clearOutputDir)));
         }
 
@@ -45,76 +46,22 @@ module.exports = function(grunt) {
         grunt.verbose.write('Assets found:', assetMap);
 
         // Write out assetMap
-        if (opts.jsonOutput === true) {
+        if(opts.jsonOutput === true) {
             grunt.file.write(path.resolve(opts.baseDir, opts.jsonOutputFilename), JSON.stringify(assetMap));
         }
 
-        // don't just split on the filename, if the filename = 'app.css' it will replace
-        // all app.css references, even to files in other dirs
-        // so replace this:
-        // "{file}"
-        // '{file}'
-        // ({file}) (css url(...))
-        // ={file}> (unquoted html attribute)
-        // ={file}\s (unquoted html attribute followed by more attributes)
-        // files may contain a querystring, so all with ? as closing too
-        var replaceEnclosedBy = [
-            ['"', '"'],
-            ["'", "'"],
-            ['(', ')'],
-            ['=', '>'],
-            ['=', ' '],
-        ];
-        replaceEnclosedBy = replaceEnclosedBy.concat(replaceEnclosedBy.map(function(reb) {
-            return [reb[0], '?'];
-        }));
-
-        // Go through each source file and replace them with busted file if available
-        var map = opts.queryString ? undefined : assetMap;
-        getFilesToBeRenamed(this.files, map, opts.baseDir).forEach(replaceInFile);
+        // Go through each source file and replace terms
+        getFilesToBeRenamed(this.files).forEach(replaceInFile);
 
         function replaceInFile(filepath) {
             var markup = grunt.file.read(filepath);
-            var baseDir = discoveryOpts.cwd + '/';
-            var relativeFileDir = path.dirname(filepath).substr(baseDir.length);
-            var fileDepth = 0;
-
-            if (relativeFileDir !== '') {
-                fileDepth = relativeFileDir.split('/').length;
-            }
-
-            var baseDirs = filepath.substr(baseDir.length).split('/');
 
             _.each(assetMap, function(hashed, original) {
-                var replace = [
-                    // abs path
-                    ['/' + original, '/' + hashed],
-                    // relative
-                    [grunt.util.repeat(fileDepth, '../') + original, grunt.util.repeat(fileDepth, '../') + hashed],
-                ];
-                // find relative paths for shared dirs
-                var originalDirParts = path.dirname(original).split('/');
-                for (var i = 1; i <= fileDepth; i++) {
-                    var fileDir = originalDirParts.slice(0, i).join('/');
-                    var baseDir = baseDirs.slice(0, i).join('/');
-                    if (fileDir === baseDir) {
-                        var originalFilename = path.basename(original);
-                        var hashedFilename = path.basename(hashed);
-                        var dir = grunt.util.repeat(fileDepth - 1, '../') + originalDirParts.slice(i).join('/');
-                        if (dir.substr(-1) !== '/') {
-                            dir += '/';
-                        }
-                        replace.push([dir + originalFilename, dir + hashedFilename]);
-                    }
+                if(opts.basePath && opts.basePath.length > 0) {
+                    original = original.replace(opts.basePath, '');
+                    hashed = hashed.replace(opts.basePath, '');
                 }
-
-                _.each(replace, function(r) {
-                    var original = r[0];
-                    var hashed = r[1];
-                    _.each(replaceEnclosedBy, function(reb) {
-                        markup = markup.split(reb[0] + original + reb[1]).join(reb[0] + hashed + reb[1]);
-                    });
-                });
+                markup = markup.split(original).join(hashed);
             });
 
             grunt.file.write(filepath, markup);
@@ -158,26 +105,12 @@ module.exports = function(grunt) {
             }
         }
 
-        function getFilesToBeRenamed(files, assetMap, baseDir) {
+        function getFilesToBeRenamed(files) {
             var originalConfig = files[0].orig;
-            // check if fully specified filenames have been busted and replace with busted file
-            originalConfig.src = originalConfig.src.map(function(file) {
-                if (file.substr(0, baseDir.length) === baseDir && (file.substr(baseDir.length + 1)) in assetMap) {
-                    return baseDir + '/' + assetMap[file.substr(baseDir.length + 1)];
-                }
-                return file;
-            });
 
             return grunt.file
                 .expand(originalConfig, originalConfig.src)
-                .map(function(file) {
-
-                    // if the file is hashed, then the hashed file should be
-                    // used instead of the original for replacement.  This will
-                    // only be the case if an outputDir is being used.
-                    if (!opts.queryString && opts.outputDir && _.has(assetMap, file)) {
-                        file = assetMap[file];
-                    }
+                .map(function (file) {
                     grunt.log.ok('Busted:', file);
                     return path.resolve((originalConfig.cwd ? originalConfig.cwd + path.sep : '') + file);
                 });
